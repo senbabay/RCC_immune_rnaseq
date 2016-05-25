@@ -1,0 +1,2428 @@
+---
+title: "RNAseq comparisons"
+runtime: shiny
+output: html_document
+---
+
+```{r}
+# Steps in processing (same for all cell populations):  
+# (1) The expression dataset is log2 transformed,  
+# (2) samples are extracted,  
+# (3) the within-group average is computed for the expression of each gene,  
+# (4) Group A - Group B difference is found for each gene   
+
+# Note: A difference in the log scale is equivalent to a ratio.
+```
+
+# {.tabset .tabset-pills}
+## NK cells
+### 1a vs 1b
+
+> Comparison between activated CD56bright (1a) and resting CD56 bright (1b) cells  
+1a: CD16-CD49a+CD103+ (N=2)  
+1b: CD3-CD56+CD16-CD49a+CD103+ (N=2)
+
+### 2a vs 2b 
+
+> Comparison between CD56dim (2a) and CD56bright (2b) cells  
+2a: CD3-CD56+CD16+CD49a-CD103- (N=1) + CD3-CD19-CD56+CD16+ (N=1)  
+2b: CD3-CD56+CD16-CD49a+CD103+ (N=2) + CD16-CD49a+CD103+ (N=2) 
+
+### 3a vs 3b 
+
+> Comparison between activated CD56 bright (3b) and a special subpopulation of CD56dim (3a) cells  
+3a: CD16+CD49a+CD103+ (N=1)   
+3b: CD16-CD49a+CD103+ (N=1) 
+
+```{r, echo = FALSE,message=F,warning=FALSE}
+library(shiny)
+library(DT)
+
+# Read in RNAseq data
+dat = readRDS("counts_scaled_DESeq.rds")
+colnames(dat) = gsub("_","-",toupper(gsub("s_","",colnames(dat))))
+# Log-transform
+ldat = log2(dat) 
+# Read in comparison table
+cmp = read.csv("MAY16_Comparisons.txt",sep="\t",header=T)
+# NK cells
+w = which(cmp[,which(colnames(cmp)=="Celltype")] == "NK")
+cmp2 = cmp[w,]
+# CD8 cells
+w = which(cmp[,which(colnames(cmp)=="Celltype")] == "CD8")
+cmp3 = cmp[w,]
+# Macrophages
+w = which(cmp[,which(colnames(cmp)=="Celltype")] == "Macrophages")
+cmp4 = cmp[w,]
+# Dendritic cells
+w = which(cmp[,which(colnames(cmp)=="Celltype")] == "DC")
+cmp5 = cmp[w,]
+# CD4
+w = which(cmp[,which(colnames(cmp)=="Celltype")] == "CD4")
+cmp6 = cmp[w,]
+# Neutrophils
+w = which(cmp[,which(colnames(cmp)=="Celltype")] == "Neutrophils")
+cmp7 = cmp[w,]
+DOWN.SLIDER.MAX = -1
+UP.SLIDER.MIN = 1
+########################################################################
+```
+
+```{r, echo = FALSE}
+shinyApp(
+  
+  ui = shinyUI(
+           tabsetPanel(id="NK",
+          tabPanel(title="1a vs 1b",
+               shinyUI(fluidPage(
+                 fluidRow(
+                   column(6,wellPanel(uiOutput("thresh1"))),
+                   column(6,wellPanel(uiOutput("thresh2")))
+                 ),
+                 fluidRow(
+                   column(12, align="center", plotOutput("unsized", height = 400, width = 800)                                             )
+                 ),
+                 fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown1', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp1', 'Download complete gene list'))
+                ),
+                 fluidRow(
+                   column(6,DT::dataTableOutput("downTable")),
+                   column(6,DT::dataTableOutput("upTable"))
+                 )
+                 
+              ))
+            ),
+          tabPanel(title="2a vs 2b",
+                   shinyUI(fluidPage(
+                     fluidRow(
+                       column(6,wellPanel(uiOutput("thresh3"))),
+                       column(6,wellPanel(uiOutput("thresh4")))
+                     ),
+                     fluidRow(
+                       column(12, align="center", plotOutput("unsized2", height = 400, width = 800)                                             )
+                     ),
+                     fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown2', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp2', 'Download complete gene list'))
+                      ),
+                    fluidRow(
+                       column(6,DT::dataTableOutput("downTable2")),
+                       column(6,DT::dataTableOutput("upTable2")) 
+                      )
+
+                   ))
+                   ),
+          tabPanel(title="3a vs 3b",
+                   shinyUI(fluidPage(
+                     fluidRow(
+                       column(6,wellPanel(uiOutput("thresh5"))),
+                       column(6,wellPanel(uiOutput("thresh6")))
+                     ),
+                     fluidRow(
+                       column(12, align="center", plotOutput("unsized3", height = 400, width = 800)                                             )
+                     ),
+                     fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown3', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp3', 'Download complete gene list'))
+                      ),
+                     fluidRow(
+                       column(6,DT::dataTableOutput("downTable3")),
+                       column(6,DT::dataTableOutput("upTable3"))
+                     )
+                   ))
+                   )
+      )
+ ),
+
+
+server =  function(input, output) {
+   # NK comparisons
+  getGroups <- reactive({
+    tab = input$NK
+    groups = unlist(strsplit(tab," vs "))
+    groups
+  })
+  
+  getRatio <- reactive({
+    groups = getGroups()
+    # GROUP1 and GROUP2 samples
+    ix = as.numeric(substr(groups[1],1,1))
+    a = as.character(cmp2[which(cmp2[,ix+2]==groups[1]),1])
+    b = as.character(cmp2[which(cmp2[,ix+2]==groups[2]),1])
+    # Get these samples from ldat and average the gene expression values within group
+    mx1 = match(a,colnames(ldat))
+    stopifnot(!is.element(NA,mx1))
+    if(length(mx1) > 1){
+      a.dat = apply(ldat[,mx1],1,mean)
+    }else{
+      a.dat = ldat[,mx1]
+    }#end if else
+    
+    # group b
+    mx2 = match(b,colnames(ldat))
+    stopifnot(!is.element(NA,mx2))
+    if(length(mx2) > 1){
+      b.dat = apply(ldat[,mx2],1,mean)
+    }else{
+      b.dat = ldat[,mx2]
+    }#end if else
+    
+    # Compute log-fold differences
+    ratio = a.dat - b.dat
+    ratio
+  })
+  
+  getData <- reactive({
+    UP = input$upcut
+    LOW = input$lowcut
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+  getData2 <- reactive({
+    UP = input$upcut2
+    LOW = input$lowcut2
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+  getData3 <- reactive({
+    UP = input$upcut3
+    LOW = input$lowcut3
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+  # Density plot 
+  output$unsized <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut
+    LOW = input$lowcut
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+  })
+  
+  output$unsized2 <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut2
+    LOW = input$lowcut2
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData2()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData2()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+  })
+  
+  
+  output$unsized3 <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut3
+    LOW = input$lowcut3
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData3()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData3()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+   })
+  
+  
+  
+  
+  
+  output$thresh1 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh2 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+  output$thresh3 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut2", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh4 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut2", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+  output$thresh5 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut3", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh6 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut3", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+  
+  
+  
+  # Show top positive and negative genes
+    posGenes <- reactive({
+      ratio = getRatio()
+      wx = getData()$w.up
+      tmp = ratio[wx]
+      ordx = order(tmp,decreasing=TRUE)
+      upRatio = tmp[ordx]
+      upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+      upDF[,2] = as.numeric(upDF[,2])
+      rownames(upDF) = NULL
+      upDF
+    })
+    
+    negGenes <- reactive({
+      ratio = getRatio()
+      wx = getData()$w.low
+      tmp = ratio[wx]
+      ordx = order(tmp,decreasing=FALSE)
+      downRatio = tmp[ordx]
+      downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+      downDF[,2] = as.numeric(downDF[,2])
+      rownames(downDF) = NULL
+      downDF
+    })
+      
+    
+    
+    posGenes2 <- reactive({
+      ratio = getRatio()
+      wx = getData2()$w.up
+      tmp = ratio[wx]
+      ordx = order(tmp,decreasing=TRUE)
+      upRatio = tmp[ordx]
+      upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+      upDF[,2] = as.numeric(upDF[,2])
+      rownames(upDF) = NULL
+      upDF
+    })
+    
+    negGenes2 <- reactive({
+      ratio = getRatio()
+      wx = getData2()$w.low
+      tmp = ratio[wx]
+      ordx = order(tmp,decreasing=FALSE)
+      downRatio = tmp[ordx]
+      downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+      downDF[,2] = as.numeric(downDF[,2])
+      rownames(downDF) = NULL
+      downDF
+    })
+    
+    
+    
+    posGenes3 <- reactive({
+      ratio = getRatio()
+      wx = getData3()$w.up
+      tmp = ratio[wx]
+      ordx = order(tmp,decreasing=TRUE)
+      upRatio = tmp[ordx]
+      upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+      upDF[,2] = as.numeric(upDF[,2])
+      rownames(upDF) = NULL
+      upDF
+    })
+    
+    negGenes3 <- reactive({
+      ratio = getRatio()
+      wx = getData3()$w.low
+      tmp = ratio[wx]
+      ordx = order(tmp,decreasing=FALSE)
+      downRatio = tmp[ordx]
+      downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+      downDF[,2] = as.numeric(downDF[,2])
+      rownames(downDF) = NULL
+      downDF
+    })
+    ##################################################### 
+    ########################### 1a vs 1b
+    #####################################################
+
+    output$upTable <- DT::renderDataTable({
+      DT::datatable(posGenes(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 1a')
+    })
+    
+    output$downTable <- DT::renderDataTable({
+      DT::datatable(negGenes(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 1b')
+    })
+    
+    output$downloadDataUp1 <- downloadHandler(
+      filename = function() { 'NK_cells_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes(), file)
+      }
+    )
+    
+    output$downloadDataDown1 <- downloadHandler(
+      filename = function() { 'NK_cells_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes(), file)
+      }
+    )
+    ##################################################### 
+    ########################### 2a vs 2b
+    #####################################################
+    
+    output$upTable2 <- DT::renderDataTable({
+      DT::datatable(posGenes2(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 2a')
+    })
+    
+    output$downTable2 <- DT::renderDataTable({
+      DT::datatable(negGenes2(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 2b')
+    })
+    
+    output$downloadDataUp2 <- downloadHandler(
+      filename = function() { 'NK_cells_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes2(), file)
+      }
+    )
+    
+    output$downloadDataDown2 <- downloadHandler(
+      filename = function() { 'NK_cells_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes2(), file)
+      }
+    )
+    ##################################################### 
+    ########################### 3a vs 3b
+    #####################################################
+    
+    output$upTable3 <- DT::renderDataTable({
+      DT::datatable(posGenes3(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 3a')
+    })
+    
+    output$downTable3 <- DT::renderDataTable({
+      DT::datatable(negGenes3(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 3b')
+    })
+    
+    output$downloadDataUp3 <- downloadHandler(
+      filename = function() { 'NK_cells_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes3(), file)
+      }
+    )
+    
+    output$downloadDataDown3 <- downloadHandler(
+      filename = function() { 'NK_cells_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes3(), file)
+      }
+    )
+
+
+},
+
+options = list(width="100%",height=1600)
+
+)
+```
+
+## CD8 T cells
+### 1a vs 1b
+
+> Stringent comparison between tissue resident CD8 T (1a) and circulating/recruited CD8 T (1b) cells  
+1a: CD8+CD49a+CD103+CD5+PD1- (N=3) + CD8+CD49a+CD103+PD1- (N=1)  
+1b: CD8+CD49a-CD103-CD5+PD1- (N=2)  
+
+### 2a vs 2b 
+
+> Loose comparison between tissue resident CD8 T (2a) and circulating/recruited CD8 T (2b) cells   
+2a: CD8+CD49a+CD103+CD5+PD1- (N=3) + CD8+CD49a+CD103+PD1- (N=1) + CD8+CD49a+CD103+CD5+PD1+ (N=1)   
+2b: All CD8+CD49a-CD103- cells regardless of CD5 and PD1 status (N=15)  
+
+### 3a vs 3b 
+
+> Comparison between PD1+ (3a) and PD1- (3b) tissue-resident CD8 T cells  
+3a: CD8+CD49a+CD103+CD5+PD1+ (N=1)   
+3b: CD8+CD49a+CD103+CD5+PD1- (N=1)  
+
+
+
+
+```{r, echo = FALSE}
+shinyApp(
+  
+  ui = shinyUI(
+           tabsetPanel(id="CD8",
+          tabPanel(title="1a vs 1b",
+               shinyUI(fluidPage(
+                 fluidRow(
+                   column(6,wellPanel(uiOutput("thresh1"))),
+                   column(6,wellPanel(uiOutput("thresh2")))
+                 ),
+                 fluidRow(
+                   column(12, align="center", plotOutput("unsized", height = 400, width = 800)                                             )
+                 ),
+                 fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown1', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp1', 'Download complete gene list'))
+                  ),
+                 fluidRow(
+                   column(6,DT::dataTableOutput("downTable")),
+                   column(6,DT::dataTableOutput("upTable"))
+                 )
+                 
+              ))
+            ),
+          tabPanel(title="2a vs 2b",
+                   shinyUI(fluidPage(
+                     fluidRow(
+                       column(6,wellPanel(uiOutput("thresh3"))),
+                       column(6,wellPanel(uiOutput("thresh4")))
+                     ),
+                     fluidRow(
+                       column(12, align="center", plotOutput("unsized2", height = 400, width = 800)                                             )
+                     ),
+                     fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown2', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp2', 'Download complete gene list'))
+                    ),
+                     fluidRow(
+                       column(6,DT::dataTableOutput("downTable2")),
+                       column(6,DT::dataTableOutput("upTable2")) 
+                      )
+
+                   ))
+                   ),
+          tabPanel(title="3a vs 3b",
+                   shinyUI(fluidPage(
+                     fluidRow(
+                       column(6,wellPanel(uiOutput("thresh5"))),
+                       column(6,wellPanel(uiOutput("thresh6")))
+                     ),
+                     fluidRow(
+                       column(12, align="center", plotOutput("unsized3", height = 400, width = 800)                                             )
+                     ),
+                     fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown3', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp3', 'Download complete gene list'))
+                    ),
+                     fluidRow(
+                       column(6,DT::dataTableOutput("downTable3")),
+                       column(6,DT::dataTableOutput("upTable3"))
+                     )
+                   ))
+                   )
+      )
+ ),
+
+
+server =  function(input, output) {
+   # NK comparisons
+  getGroups <- reactive({
+    tab = input$CD8
+    groups = unlist(strsplit(tab," vs "))
+    groups
+  })
+  
+  getRatio <- reactive({
+    groups = getGroups()
+    # GROUP1 and GROUP2 samples
+    ix = as.numeric(substr(groups[1],1,1))
+    a = as.character(cmp3[which(cmp3[,ix+2]==groups[1]),1])
+    b = as.character(cmp3[which(cmp3[,ix+2]==groups[2]),1])
+    # Get these samples from ldat and average the gene expression values within group
+    mx1 = match(a,colnames(ldat))
+    stopifnot(!is.element(NA,mx1))
+    if(length(mx1) > 1){
+      a.dat = apply(ldat[,mx1],1,mean)
+    }else{
+      a.dat = ldat[,mx1]
+    }#end if else
+    
+    # group b
+    mx2 = match(b,colnames(ldat))
+    stopifnot(!is.element(NA,mx2))
+    if(length(mx2) > 1){
+      b.dat = apply(ldat[,mx2],1,mean)
+    }else{
+      b.dat = ldat[,mx2]
+    }#end if else
+    
+    # Compute log-fold differences
+    ratio = a.dat - b.dat
+    ratio
+  })
+  
+  getData <- reactive({
+    UP = input$upcut
+    LOW = input$lowcut
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+  getData2 <- reactive({
+    UP = input$upcut2
+    LOW = input$lowcut2
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+  getData3 <- reactive({
+    UP = input$upcut3
+    LOW = input$lowcut3
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+  # Density plot 
+  output$unsized <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut
+    LOW = input$lowcut
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+  })
+  
+  output$unsized2 <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut2
+    LOW = input$lowcut2
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData2()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData2()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+  })
+  
+  
+  output$unsized3 <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut3
+    LOW = input$lowcut3
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData3()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData3()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+   })
+  
+  
+  
+  
+  
+  
+  
+  
+  output$thresh1 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh2 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+  output$thresh3 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut2", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh4 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut2", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+  output$thresh5 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut3", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh6 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut3", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+  
+  
+  
+  # Show top positive and negative genes
+  posGenes <- reactive({
+    ratio = getRatio()
+    wx = getData()$w.up
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=TRUE)
+    upRatio = tmp[ordx]
+    upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+    upDF[,2] = as.numeric(upDF[,2])
+    rownames(upDF) = NULL
+    upDF
+  })
+  
+  negGenes <- reactive({
+    ratio = getRatio()
+    wx = getData()$w.low
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=FALSE)
+    downRatio = tmp[ordx]
+    downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+    downDF[,2] = as.numeric(downDF[,2])
+    rownames(downDF) = NULL
+    downDF
+  })
+    
+  
+  
+  posGenes2 <- reactive({
+    ratio = getRatio()
+    wx = getData2()$w.up
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=TRUE)
+    upRatio = tmp[ordx]
+    upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+    upDF[,2] = as.numeric(upDF[,2])
+    rownames(upDF) = NULL
+    upDF
+  })
+  
+  negGenes2 <- reactive({
+    ratio = getRatio()
+    wx = getData2()$w.low
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=FALSE)
+    downRatio = tmp[ordx]
+    downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+    downDF[,2] = as.numeric(downDF[,2])
+    rownames(downDF) = NULL
+    downDF
+  })
+  
+  
+  
+  posGenes3 <- reactive({
+    ratio = getRatio()
+    wx = getData3()$w.up
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=TRUE)
+    upRatio = tmp[ordx]
+    upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+    upDF[,2] = as.numeric(upDF[,2])
+    rownames(upDF) = NULL
+    upDF
+  })
+  
+  negGenes3 <- reactive({
+    ratio = getRatio()
+    wx = getData3()$w.low
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=FALSE)
+    downRatio = tmp[ordx]
+    downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+    downDF[,2] = as.numeric(downDF[,2])
+    rownames(downDF) = NULL
+    downDF
+  })
+    ##################################################### 
+    ########################### 1a vs 1b
+    #####################################################
+    output$upTable <- DT::renderDataTable({
+      DT::datatable(posGenes(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 1a')
+    })
+    
+    output$downTable <- DT::renderDataTable({
+      DT::datatable(negGenes(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 1b')
+    })
+    
+    output$downloadDataUp1 <- downloadHandler(
+      filename = function() { 'CD8_cells_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes(), file)
+      }
+    )
+    
+    output$downloadDataDown1 <- downloadHandler(
+      filename = function() { 'CD8_cells_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes(), file)
+      }
+    )
+    ##################################################### 
+    ########################### 2a vs 2b
+    #####################################################
+    
+    output$upTable2 <- DT::renderDataTable({
+      DT::datatable(posGenes2(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 2a')
+    })
+    
+    output$downTable2 <- DT::renderDataTable({
+      DT::datatable(negGenes2(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 2b')
+    })
+    
+        output$downloadDataUp2 <- downloadHandler(
+      filename = function() { 'CD8_cells_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes2(), file)
+      }
+    )
+    
+    output$downloadDataDown2 <- downloadHandler(
+      filename = function() { 'CD8_cells_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes2(), file)
+      }
+    )
+    ##################################################### 
+    ########################### 3a vs 3b
+    #####################################################
+    output$upTable3 <- DT::renderDataTable({
+      DT::datatable(posGenes3(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 3a')
+    })
+    
+    output$downTable3 <- DT::renderDataTable({
+      DT::datatable(negGenes3(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 3b')
+    })
+
+        output$downloadDataUp3 <- downloadHandler(
+      filename = function() { 'CD8_cells_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes3(), file)
+      }
+    )
+    
+    output$downloadDataDown3 <- downloadHandler(
+      filename = function() { 'CD8_cells_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes3(), file)
+      }
+    )
+
+},
+
+options = list(width="100%",height=1600)
+
+)
+```
+
+
+## Macrophages
+### 1a vs 1b
+
+> Comparison between activated TAMS (1a) and monocyte-type TAMS (1b)  
+1a: TAM3 (N=1)  
+1b: TAM2 (N=1)  
+
+### 2a vs 2b 
+
+> Comparison of activated TAMs (2a) with the mixture of activated TAMs and monocyte-type TAMs (2b)  
+2a: TAM3 (N=1)  
+2b: TAM2 + TAM3 (N=5)  
+
+### 3a vs 3b 
+
+> Comparison of monocyte-type TAMs (3a) with the mixture of activated TAMs and monocyte-type TAMs (3b)  
+3a: TAM2 (N=1)   
+3b: TAM2 + TAM3 (N=5)   
+
+### 4a vs 4b 
+
+> Comparison between blood monocytes (4a, N=4) and monocyte-type TAMs (4b, N=1, TAM2)  
+
+
+```{r, echo = FALSE}
+shinyApp(
+  
+  ui = shinyUI(
+           tabsetPanel(id="MF",
+          tabPanel(title="1a vs 1b",
+               shinyUI(fluidPage(
+                 fluidRow(
+                   column(6,wellPanel(uiOutput("thresh1"))),
+                   column(6,wellPanel(uiOutput("thresh2")))
+                 ),
+                 fluidRow(
+                   column(12, align="center", plotOutput("unsized", height = 400, width = 800)                                             )
+                 ),
+                 fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown1', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp1', 'Download complete gene list'))
+                  ),
+                 fluidRow(
+                   column(6,DT::dataTableOutput("downTable")),
+                   column(6,DT::dataTableOutput("upTable"))
+                 )
+                 
+              ))
+            ),
+          tabPanel(title="2a vs 2b",
+                   shinyUI(fluidPage(
+                     fluidRow(
+                       column(6,wellPanel(uiOutput("thresh3"))),
+                       column(6,wellPanel(uiOutput("thresh4")))
+                     ),
+                     fluidRow(
+                       column(12, align="center", plotOutput("unsized2", height = 400, width = 800)                                             )
+                     ),
+                     fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown2', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp2', 'Download complete gene list'))
+                    ),
+                     fluidRow(
+                       column(6,DT::dataTableOutput("downTable2")),
+                       column(6,DT::dataTableOutput("upTable2")) 
+                      )
+
+                   ))
+                   ),
+          tabPanel(title="3a vs 3b",
+                   shinyUI(fluidPage(
+                     fluidRow(
+                       column(6,wellPanel(uiOutput("thresh5"))),
+                       column(6,wellPanel(uiOutput("thresh6")))
+                     ),
+                     fluidRow(
+                       column(12, align="center", plotOutput("unsized3", height = 400, width = 800)                                             )
+                     ),
+                     fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown3', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp3', 'Download complete gene list'))
+                      ),
+                     fluidRow(
+                       column(6,DT::dataTableOutput("downTable3")),
+                       column(6,DT::dataTableOutput("upTable3"))
+                     )
+                   ))
+                   ),
+          tabPanel(title="4a vs 4b",
+                   shinyUI(fluidPage(
+                     fluidRow(
+                       column(6,wellPanel(uiOutput("thresh7"))),
+                       column(6,wellPanel(uiOutput("thresh8")))
+                     ),
+                     fluidRow(
+                       column(12, align="center", plotOutput("unsized4", height = 400, width = 800)                                             )
+                     ),
+                     fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown4', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp4', 'Download complete gene list'))
+                    ),
+                     fluidRow(
+                       column(6,DT::dataTableOutput("downTable4")),
+                       column(6,DT::dataTableOutput("upTable4"))
+                     )
+                   ))
+                   )
+      )
+ ),
+
+
+server =  function(input, output) {
+   #  comparisons
+  getGroups <- reactive({
+    tab = input$MF
+    groups = unlist(strsplit(tab," vs "))
+    groups
+  })
+  
+  getRatio <- reactive({
+    groups = getGroups()
+    # GROUP1 and GROUP2 samples
+    ix = as.numeric(substr(groups[1],1,1))
+    a = as.character(cmp4[which(cmp4[,ix+2]==groups[1]),1])
+    b = as.character(cmp4[which(cmp4[,ix+2]==groups[2]),1])
+    # Get these samples from ldat and average the gene expression values within group
+    mx1 = match(a,colnames(ldat))
+    stopifnot(!is.element(NA,mx1))
+    if(length(mx1) > 1){
+      a.dat = apply(ldat[,mx1],1,mean)
+    }else{
+      a.dat = ldat[,mx1]
+    }#end if else
+    
+    # group b
+    mx2 = match(b,colnames(ldat))
+    stopifnot(!is.element(NA,mx2))
+    if(length(mx2) > 1){
+      b.dat = apply(ldat[,mx2],1,mean)
+    }else{
+      b.dat = ldat[,mx2]
+    }#end if else
+    
+    # Compute log-fold differences
+    ratio = a.dat - b.dat
+    ratio
+  })
+  
+  getData <- reactive({
+    UP = input$upcut
+    LOW = input$lowcut
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+  getData2 <- reactive({
+    UP = input$upcut2
+    LOW = input$lowcut2
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+  getData3 <- reactive({
+    UP = input$upcut3
+    LOW = input$lowcut3
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+  getData4 <- reactive({
+    UP = input$upcut4
+    LOW = input$lowcut4
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+    
+  # Density plot 
+  output$unsized <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut
+    LOW = input$lowcut
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+  })
+  
+  output$unsized2 <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut2
+    LOW = input$lowcut2
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData2()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData2()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+  })
+  
+  
+  output$unsized3 <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut3
+    LOW = input$lowcut3
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData3()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData3()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+   })
+  
+  
+  output$unsized4 <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut4
+    LOW = input$lowcut4
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData4()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData4()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+   })
+  
+  
+  
+  
+  output$thresh1 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh2 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+  output$thresh3 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut2", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh4 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut2", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+  output$thresh5 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut3", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh6 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut3", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+    output$thresh7 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut4", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh8 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut4", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+  
+  
+  
+  # Show top positive and negative genes
+  posGenes <- reactive({
+    ratio = getRatio()
+    wx = getData()$w.up
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=TRUE)
+    upRatio = tmp[ordx]
+    upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+    upDF[,2] = as.numeric(upDF[,2])
+    rownames(upDF) = NULL
+    upDF
+  })
+  
+  negGenes <- reactive({
+    ratio = getRatio()
+    wx = getData()$w.low
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=FALSE)
+    downRatio = tmp[ordx]
+    downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+    downDF[,2] = as.numeric(downDF[,2])
+    rownames(downDF) = NULL
+    downDF
+  })
+    
+  
+  
+  posGenes2 <- reactive({
+    ratio = getRatio()
+    wx = getData2()$w.up
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=TRUE)
+    upRatio = tmp[ordx]
+    upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+    upDF[,2] = as.numeric(upDF[,2])
+    rownames(upDF) = NULL
+    upDF
+  })
+  
+  negGenes2 <- reactive({
+    ratio = getRatio()
+    wx = getData2()$w.low
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=FALSE)
+    downRatio = tmp[ordx]
+    downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+    downDF[,2] = as.numeric(downDF[,2])
+    rownames(downDF) = NULL
+    downDF
+  })
+  
+  
+  
+  posGenes3 <- reactive({
+    ratio = getRatio()
+    wx = getData3()$w.up
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=TRUE)
+    upRatio = tmp[ordx]
+    upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+    upDF[,2] = as.numeric(upDF[,2])
+    rownames(upDF) = NULL
+    upDF
+  })
+  
+  negGenes3 <- reactive({
+    ratio = getRatio()
+    wx = getData3()$w.low
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=FALSE)
+    downRatio = tmp[ordx]
+    downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+    downDF[,2] = as.numeric(downDF[,2])
+    rownames(downDF) = NULL
+    downDF
+  })
+  
+    posGenes4 <- reactive({
+    ratio = getRatio()
+    wx = getData4()$w.up
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=TRUE)
+    upRatio = tmp[ordx]
+    upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+    upDF[,2] = as.numeric(upDF[,2])
+    rownames(upDF) = NULL
+    upDF
+  })
+  
+  negGenes4 <- reactive({
+    ratio = getRatio()
+    wx = getData4()$w.low
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=FALSE)
+    downRatio = tmp[ordx]
+    downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+    downDF[,2] = as.numeric(downDF[,2])
+    rownames(downDF) = NULL
+    downDF
+  })
+    ##################################################### 
+    ########################### 1a vs 1b
+    #####################################################
+    output$upTable <- DT::renderDataTable({
+      DT::datatable(posGenes(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 1a')
+    })
+    
+    output$downTable <- DT::renderDataTable({
+      DT::datatable(negGenes(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 1b')
+    })
+    
+        output$downloadDataUp1 <- downloadHandler(
+      filename = function() { 'MF_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes(), file)
+      }
+    )
+    
+    output$downloadDataDown1 <- downloadHandler(
+      filename = function() { 'MF_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes(), file)
+      }
+    )
+    ##################################################### 
+    ########################### 2a vs 2b
+    #####################################################
+    
+    output$upTable2 <- DT::renderDataTable({
+      DT::datatable(posGenes2(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 2a')
+    })
+    
+    output$downTable2 <- DT::renderDataTable({
+      DT::datatable(negGenes2(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 2b')
+    })
+    
+            output$downloadDataUp2 <- downloadHandler(
+      filename = function() { 'MF_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes2(), file)
+      }
+    )
+    
+    output$downloadDataDown2 <- downloadHandler(
+      filename = function() { 'MF_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes2(), file)
+      }
+    )
+    ##################################################### 
+    ########################### 3a vs 3b
+    #####################################################
+    output$upTable3 <- DT::renderDataTable({
+      DT::datatable(posGenes3(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 3a')
+    })
+    
+    output$downTable3 <- DT::renderDataTable({
+      DT::datatable(negGenes3(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 3b')
+    })
+    
+            output$downloadDataUp3 <- downloadHandler(
+      filename = function() { 'MF_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes3(), file)
+      }
+    )
+    
+    output$downloadDataDown3 <- downloadHandler(
+      filename = function() { 'MF_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes3(), file)
+      }
+    )
+    ##################################################### 
+    ########################### 4a vs 4b
+    #####################################################
+    output$upTable4 <- DT::renderDataTable({
+      DT::datatable(posGenes4(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 4a')
+    })
+    
+    output$downTable4 <- DT::renderDataTable({
+      DT::datatable(negGenes4(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 4b')
+    })
+
+            output$downloadDataUp4 <- downloadHandler(
+      filename = function() { 'MF_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes4(), file)
+      }
+    )
+    
+    output$downloadDataDown4 <- downloadHandler(
+      filename = function() { 'MF_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes4(), file)
+      }
+    )
+
+},
+
+options = list(width="100%",height=1600)
+
+)
+```
+
+## Dendritic cells
+### 1a vs 1b
+
+> Comparison between CD1c+ (1a) and CD141+ (1b) dendritic cells  
+1a: CD1c+ DCs (N=3)  
+1b: CD141 DCs (N=3)  
+
+```{r, echo = FALSE}
+shinyApp(
+  
+  ui = shinyUI(
+           tabsetPanel(id="DC",
+            tabPanel(title="1a vs 1b",
+               shinyUI(fluidPage(
+                 fluidRow(
+                   column(6,wellPanel(uiOutput("thresh1"))),
+                   column(6,wellPanel(uiOutput("thresh2")))
+                 ),
+                 fluidRow(
+                   column(12, align="center", plotOutput("unsized", height = 400, width = 800)                                             )
+                 ),
+                 fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown1', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp1', 'Download complete gene list'))
+                  ),
+                 fluidRow(
+                   column(6,DT::dataTableOutput("downTable")),
+                   column(6,DT::dataTableOutput("upTable"))
+                 )
+                 
+              ))
+            )
+         
+      )
+ ),
+
+
+server =  function(input, output) {
+   #  comparisons
+  getGroups <- reactive({
+    tab = input$DC
+    groups = unlist(strsplit(tab," vs "))
+    groups
+  })
+  
+  getRatio <- reactive({
+    groups = getGroups()
+    # GROUP1 and GROUP2 samples
+    ix = as.numeric(substr(groups[1],1,1))
+    a = as.character(cmp5[which(cmp5[,ix+2]==groups[1]),1])
+    b = as.character(cmp5[which(cmp5[,ix+2]==groups[2]),1])
+    # Get these samples from ldat and average the gene expression values within group
+    mx1 = match(a,colnames(ldat))
+    stopifnot(!is.element(NA,mx1))
+    if(length(mx1) > 1){
+      a.dat = apply(ldat[,mx1],1,mean)
+    }else{
+      a.dat = ldat[,mx1]
+    }#end if else
+    
+    # group b
+    mx2 = match(b,colnames(ldat))
+    stopifnot(!is.element(NA,mx2))
+    if(length(mx2) > 1){
+      b.dat = apply(ldat[,mx2],1,mean)
+    }else{
+      b.dat = ldat[,mx2]
+    }#end if else
+    
+    # Compute log-fold differences
+    ratio = a.dat - b.dat
+    ratio
+  })
+  
+  getData <- reactive({
+    UP = input$upcut
+    LOW = input$lowcut
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+ 
+  # Density plot 
+  output$unsized <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut
+    LOW = input$lowcut
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+  })
+  
+  
+  
+  output$thresh1 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh2 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+  
+  # Show top positive and negative genes
+  posGenes <- reactive({
+    ratio = getRatio()
+    wx = getData()$w.up
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=TRUE)
+    upRatio = tmp[ordx]
+    upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+    upDF[,2] = as.numeric(upDF[,2])
+    rownames(upDF) = NULL
+    upDF
+  })
+  
+  negGenes <- reactive({
+    ratio = getRatio()
+    wx = getData()$w.low
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=FALSE)
+    downRatio = tmp[ordx]
+    downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+    downDF[,2] = as.numeric(downDF[,2])
+    rownames(downDF) = NULL
+    downDF
+  })
+    
+    ##################################################### 
+    ########################### 1a vs 1b
+    #####################################################
+    output$upTable <- DT::renderDataTable({
+      DT::datatable(posGenes(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 1a')
+    })
+    
+    output$downTable <- DT::renderDataTable({
+      DT::datatable(negGenes(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 1b')
+    })
+    
+            output$downloadDataUp1 <- downloadHandler(
+      filename = function() { 'DC_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes(), file)
+      }
+    )
+    
+    output$downloadDataDown1 <- downloadHandler(
+      filename = function() { 'DC_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes(), file)
+      }
+    )
+    
+},
+
+options = list(width="100%",height=1600)
+
+)
+```
+
+## Tregs
+### 1a vs 1b
+
+> Comparison between Tregs (1a) and Th (non-Treg CD4+) cells (1b) in *tumor*  
+1a: CD4+CD25+ in tumor (N=1)  
+1b: CD4+CD25- in tumor (N=1)  
+
+### 2a vs 2b 
+
+> Comparison between blood Tregs (2a) and tumor Tregs (2b)   
+2a: CD4+CD25+ in blood (N=1)  
+2b: CD4+CD25+ in tumor (N=1)   
+
+### 3a vs 3b 
+
+> Comparison between blood Th (3a) and tumor Th (3b) cells   
+3a: CD4+CD25- in blood (N=1)  
+3b: CD4+CD25- in tumor (N=1)   
+
+
+```{r, echo = FALSE}
+shinyApp(
+  
+  ui = shinyUI(
+           tabsetPanel(id="TREG",
+          tabPanel(title="1a vs 1b",
+               shinyUI(fluidPage(
+                 fluidRow(
+                   column(6,wellPanel(uiOutput("thresh1"))),
+                   column(6,wellPanel(uiOutput("thresh2")))
+                 ),
+                 fluidRow(
+                   column(12, align="center", plotOutput("unsized", height = 400, width = 800)                                             )
+                 ),
+                 fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown1', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp1', 'Download complete gene list'))
+                  ),
+                 fluidRow(
+                   column(6,DT::dataTableOutput("downTable")),
+                   column(6,DT::dataTableOutput("upTable"))
+                 )
+                 
+              ))
+            ),
+          tabPanel(title="2a vs 2b",
+                   shinyUI(fluidPage(
+                     fluidRow(
+                       column(6,wellPanel(uiOutput("thresh3"))),
+                       column(6,wellPanel(uiOutput("thresh4")))
+                     ),
+                     fluidRow(
+                       column(12, align="center", plotOutput("unsized2", height = 400, width = 800)                                             )
+                     ),
+                     fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown2', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp2', 'Download complete gene list'))
+                    ),
+                     fluidRow(
+                       column(6,DT::dataTableOutput("downTable2")),
+                       column(6,DT::dataTableOutput("upTable2")) 
+                      )
+
+                   ))
+                   ),
+          tabPanel(title="3a vs 3b",
+                   shinyUI(fluidPage(
+                     fluidRow(
+                       column(6,wellPanel(uiOutput("thresh5"))),
+                       column(6,wellPanel(uiOutput("thresh6")))
+                     ),
+                     fluidRow(
+                       column(12, align="center", plotOutput("unsized3", height = 400, width = 800)                                             )
+                     ),
+                     fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown3', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp3', 'Download complete gene list'))
+                      ),
+                     fluidRow(
+                       column(6,DT::dataTableOutput("downTable3")),
+                       column(6,DT::dataTableOutput("upTable3"))
+                     )
+                   ))
+                   )
+      )
+ ),
+
+
+server =  function(input, output) {
+   # NK comparisons
+  getGroups <- reactive({
+    tab = input$TREG
+    groups = unlist(strsplit(tab," vs "))
+    groups
+  })
+  
+  getRatio <- reactive({
+    groups = getGroups()
+    # GROUP1 and GROUP2 samples
+    ix = as.numeric(substr(groups[1],1,1))
+    a = as.character(cmp6[which(cmp6[,ix+2]==groups[1]),1])
+    b = as.character(cmp6[which(cmp6[,ix+2]==groups[2]),1])
+    # Get these samples from ldat and average the gene expression values within group
+    mx1 = match(a,colnames(ldat))
+    stopifnot(!is.element(NA,mx1))
+    if(length(mx1) > 1){
+      a.dat = apply(ldat[,mx1],1,mean)
+    }else{
+      a.dat = ldat[,mx1]
+    }#end if else
+    
+    # group b
+    mx2 = match(b,colnames(ldat))
+    stopifnot(!is.element(NA,mx2))
+    if(length(mx2) > 1){
+      b.dat = apply(ldat[,mx2],1,mean)
+    }else{
+      b.dat = ldat[,mx2]
+    }#end if else
+    
+    # Compute log-fold differences
+    ratio = a.dat - b.dat
+    ratio
+  })
+  
+  getData <- reactive({
+    UP = input$upcut
+    LOW = input$lowcut
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+  getData2 <- reactive({
+    UP = input$upcut2
+    LOW = input$lowcut2
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+  getData3 <- reactive({
+    UP = input$upcut3
+    LOW = input$lowcut3
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+  # Density plot 
+  output$unsized <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut
+    LOW = input$lowcut
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+  })
+  
+  output$unsized2 <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut2
+    LOW = input$lowcut2
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData2()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData2()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+  })
+  
+  
+  output$unsized3 <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut3
+    LOW = input$lowcut3
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData3()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData3()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+   })
+  
+  
+  
+  
+  
+  
+  
+  
+  output$thresh1 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh2 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+  output$thresh3 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut2", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh4 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut2", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+  output$thresh5 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut3", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh6 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut3", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+  
+  
+  
+  # Show top positive and negative genes
+  posGenes <- reactive({
+    ratio = getRatio()
+    wx = getData()$w.up
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=TRUE)
+    upRatio = tmp[ordx]
+    upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+    upDF[,2] = as.numeric(upDF[,2])
+    rownames(upDF) = NULL
+    upDF
+  })
+  
+  negGenes <- reactive({
+    ratio = getRatio()
+    wx = getData()$w.low
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=FALSE)
+    downRatio = tmp[ordx]
+    downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+    downDF[,2] = as.numeric(downDF[,2])
+    rownames(downDF) = NULL
+    downDF
+  })
+    
+  
+  
+  posGenes2 <- reactive({
+    ratio = getRatio()
+    wx = getData2()$w.up
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=TRUE)
+    upRatio = tmp[ordx]
+    upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+    upDF[,2] = as.numeric(upDF[,2])
+    rownames(upDF) = NULL
+    upDF
+  })
+  
+  negGenes2 <- reactive({
+    ratio = getRatio()
+    wx = getData2()$w.low
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=FALSE)
+    downRatio = tmp[ordx]
+    downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+    downDF[,2] = as.numeric(downDF[,2])
+    rownames(downDF) = NULL
+    downDF
+  })
+  
+  
+  
+  posGenes3 <- reactive({
+    ratio = getRatio()
+    wx = getData3()$w.up
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=TRUE)
+    upRatio = tmp[ordx]
+    upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+    upDF[,2] = as.numeric(upDF[,2])
+    rownames(upDF) = NULL
+    upDF
+  })
+  
+  negGenes3 <- reactive({
+    ratio = getRatio()
+    wx = getData3()$w.low
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=FALSE)
+    downRatio = tmp[ordx]
+    downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+    downDF[,2] = as.numeric(downDF[,2])
+    rownames(downDF) = NULL
+    downDF
+  })
+    ##################################################### 
+    ########################### 1a vs 1b
+    #####################################################
+    output$upTable <- DT::renderDataTable({
+      DT::datatable(posGenes(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 1a')
+    })
+    
+    output$downTable <- DT::renderDataTable({
+      DT::datatable(negGenes(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 1b')
+    })
+    
+            output$downloadDataUp1 <- downloadHandler(
+      filename = function() { 'Tregs_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes(), file)
+      }
+    )
+    
+    output$downloadDataDown1 <- downloadHandler(
+      filename = function() { 'Tregs_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes(), file)
+      }
+    )
+    
+    ##################################################### 
+    ########################### 2a vs 2b
+    #####################################################
+    
+    output$upTable2 <- DT::renderDataTable({
+      DT::datatable(posGenes2(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 2a')
+    })
+    
+    output$downTable2 <- DT::renderDataTable({
+      DT::datatable(negGenes2(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 2b')
+    })
+    
+                output$downloadDataUp2 <- downloadHandler(
+      filename = function() { 'Tregs_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes2(), file)
+      }
+    )
+    
+    output$downloadDataDown2 <- downloadHandler(
+      filename = function() { 'Tregs_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes2(), file)
+      }
+    )
+    
+    ##################################################### 
+    ########################### 3a vs 3b
+    #####################################################
+    output$upTable3 <- DT::renderDataTable({
+      DT::datatable(posGenes3(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 3a')
+    })
+    
+    output$downTable3 <- DT::renderDataTable({
+      DT::datatable(negGenes3(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 3b')
+    })
+    
+                output$downloadDataUp3 <- downloadHandler(
+      filename = function() { 'Tregs_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes3(), file)
+      }
+    )
+    
+    output$downloadDataDown3 <- downloadHandler(
+      filename = function() { 'Tregs_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes3(), file)
+      }
+    )
+    
+
+
+},
+
+options = list(width="100%",height=1600)
+
+)
+```
+
+## Neutrophils
+### 1a vs 1b
+
+> Comparison between tumor-associated neutrophils (1a) and blood neutrophils (1b)  
+1a: Tumor-associated neutrophils (N=3)    
+1b: Blood neutrophils (N=4)  
+
+### 2a vs 2b 
+
+> Comparison between tumor-associated neutrophils (2a) and neutrophils in normal kidney (2b)  
+2a: Tumor-associated neutrophils (N=3)  
+2b: Neutrophils in normal kidney (CD3-SSChiCD16hi) (N=1)    
+
+
+```{r, echo = FALSE}
+shinyApp(
+  
+  ui = shinyUI(
+           tabsetPanel(id="NPH",
+          tabPanel(title="1a vs 1b",
+               shinyUI(fluidPage(
+                 fluidRow(
+                   column(6,wellPanel(uiOutput("thresh1"))),
+                   column(6,wellPanel(uiOutput("thresh2")))
+                 ),
+                 fluidRow(
+                   column(12, align="center", plotOutput("unsized", height = 400, width = 800)                                             )
+                 ),
+                 fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown1', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp1', 'Download complete gene list'))
+                ),
+                 fluidRow(
+                   column(6,DT::dataTableOutput("downTable")),
+                   column(6,DT::dataTableOutput("upTable"))
+                 )
+                 
+              ))
+            ),
+          tabPanel(title="2a vs 2b",
+                   shinyUI(fluidPage(
+                     fluidRow(
+                       column(6,wellPanel(uiOutput("thresh3"))),
+                       column(6,wellPanel(uiOutput("thresh4")))
+                     ),
+                     fluidRow(
+                       column(12, align="center", plotOutput("unsized2", height = 400, width = 800)                                             )
+                     ),
+                     fluidRow(
+                       column(6,align="center",downloadButton('downloadDataDown2', 'Download complete gene list')),
+                       column(6,align="center",downloadButton('downloadDataUp2', 'Download complete gene list'))
+                    ),
+                     fluidRow(
+                       column(6,DT::dataTableOutput("downTable2")),
+                       column(6,DT::dataTableOutput("upTable2")) 
+                      )
+
+                   ))
+                   )
+      )
+ ),
+
+
+server =  function(input, output) {
+   # NK comparisons
+  getGroups <- reactive({
+    tab = input$NPH
+    groups = unlist(strsplit(tab," vs "))
+    groups
+  })
+  
+  getRatio <- reactive({
+    groups = getGroups()
+    # GROUP1 and GROUP2 samples
+    ix = as.numeric(substr(groups[1],1,1))
+    a = as.character(cmp7[which(cmp7[,ix+2]==groups[1]),1])
+    b = as.character(cmp7[which(cmp7[,ix+2]==groups[2]),1])
+    # Get these samples from ldat and average the gene expression values within group
+    mx1 = match(a,colnames(ldat))
+    stopifnot(!is.element(NA,mx1))
+    if(length(mx1) > 1){
+      a.dat = apply(ldat[,mx1],1,mean)
+    }else{
+      a.dat = ldat[,mx1]
+    }#end if else
+    
+    # group b
+    mx2 = match(b,colnames(ldat))
+    stopifnot(!is.element(NA,mx2))
+    if(length(mx2) > 1){
+      b.dat = apply(ldat[,mx2],1,mean)
+    }else{
+      b.dat = ldat[,mx2]
+    }#end if else
+    
+    # Compute log-fold differences
+    ratio = a.dat - b.dat
+    ratio
+  })
+  
+  getData <- reactive({
+    UP = input$upcut
+    LOW = input$lowcut
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+  getData2 <- reactive({
+    UP = input$upcut2
+    LOW = input$lowcut2
+    
+    ratio = getRatio()
+    w.up = which(ratio > UP)
+    uplen = length(w.up)
+    w.low = which(ratio <  LOW)
+    lowlen = length(w.low)
+    return(list(w.up=w.up,uplen=uplen,w.low=w.low,lowlen=lowlen))
+  })
+  
+  # Density plot 
+  output$unsized <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut
+    LOW = input$lowcut
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+  })
+  
+  output$unsized2 <- renderPlot({
+    ratio = getRatio()
+    groups = getGroups()
+    UP = input$upcut2
+    LOW = input$lowcut2
+    
+    dx = density(ratio)
+    plot(dx,main=paste("Distribution of ",groups[1],"-",groups[2]," log differences (",length(ratio)," genes)",sep=""),cex.axis=1.5,cex.lab=1.5,lwd=2,xlab="")
+    abline(v=UP,col=2,lwd=2)
+    abline(v=LOW,col=4,lwd=2)
+    
+    # X axis numbers
+    mtext(UP,at=UP,side=1,line=0.5,col=2,font=2,cex=1.3)
+    mtext(LOW,at=LOW,side=1,line=0.5,col=4,font=2,cex=1.3)
+    
+    text.y = (floor(max(dx$y)*10)-1) / 10
+    text(UP,text.y,paste(getData2()$uplen,"\nUP genes",sep=""),pos=4,offset=0.3,col=2,font=2,cex=1.5)
+    text(LOW,text.y,paste(getData2()$lowlen,"\nDOWN genes", sep=""), pos=2, offset=0.3, col=4,font=2,cex=1.5)
+  })
+
+  
+  
+  
+  output$thresh1 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh2 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+  
+  output$thresh3 <- renderUI({
+    ratio = getRatio()
+    sliderInput("lowcut2", label = "Threshold for DOWN region:",
+                min = ceiling(min(ratio))  , max = DOWN.SLIDER.MAX , value = -3, step = 0.1)
+  })
+  
+  output$thresh4 <- renderUI({
+    ratio = getRatio()
+    sliderInput("upcut2", label = "Threshold for UP region:",
+                min = UP.SLIDER.MIN, max = floor(max(ratio)), value = 3, step = 0.1)
+  })
+
+  
+  
+  # Show top positive and negative genes
+  posGenes <- reactive({
+    ratio = getRatio()
+    wx = getData()$w.up
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=TRUE)
+    upRatio = tmp[ordx]
+    upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+    upDF[,2] = as.numeric(upDF[,2])
+    rownames(upDF) = NULL
+    upDF
+  })
+  
+  negGenes <- reactive({
+    ratio = getRatio()
+    wx = getData()$w.low
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=FALSE)
+    downRatio = tmp[ordx]
+    downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+    downDF[,2] = as.numeric(downDF[,2])
+    rownames(downDF) = NULL
+    downDF
+  })
+    
+  
+  
+  posGenes2 <- reactive({
+    ratio = getRatio()
+    wx = getData2()$w.up
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=TRUE)
+    upRatio = tmp[ordx]
+    upDF =as.data.frame(cbind(GENE=names(upRatio),FC=round(upRatio,3)))
+    upDF[,2] = as.numeric(upDF[,2])
+    rownames(upDF) = NULL
+    upDF
+  })
+  
+  negGenes2 <- reactive({
+    ratio = getRatio()
+    wx = getData2()$w.low
+    tmp = ratio[wx]
+    ordx = order(tmp,decreasing=FALSE)
+    downRatio = tmp[ordx]
+    downDF =as.data.frame(cbind(GENE=names(downRatio),FC=round(downRatio,3)))
+    downDF[,2] = as.numeric(downDF[,2])
+    rownames(downDF) = NULL
+    downDF
+  })
+  
+    ##################################################### 
+    ########################### 1a vs 1b
+    #####################################################
+    output$upTable <- DT::renderDataTable({
+      DT::datatable(posGenes(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 1a')
+    })
+    
+    output$downTable <- DT::renderDataTable({
+      DT::datatable(negGenes(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 1b')
+    })
+    
+                output$downloadDataUp1 <- downloadHandler(
+      filename = function() { 'Neutrophils_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes(), file)
+      }
+    )
+    
+    output$downloadDataDown1 <- downloadHandler(
+      filename = function() { 'Neutrophils_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes(), file)
+      }
+    )
+    
+    
+    
+    ##################################################### 
+    ########################### 2a vs 2b
+    #####################################################
+    
+    output$upTable2 <- DT::renderDataTable({
+      DT::datatable(posGenes2(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 2a')
+    })
+    
+    output$downTable2 <- DT::renderDataTable({
+      DT::datatable(negGenes2(),
+                    options = list(pageLength = 20),
+                    caption = 'Genes high in 2b')
+    })
+
+    output$downloadDataUp2 <- downloadHandler(
+      filename = function() { 'Neutrophils_selected_UP_genes.csv' },
+      content = function(file) {
+        write.csv(posGenes2(), file)
+      }
+    )
+    
+    output$downloadDataDown2 <- downloadHandler(
+      filename = function() { 'Neutrophils_selected_DOWN_genes.csv' },
+      content = function(file) {
+        write.csv(negGenes2(), file)
+      }
+    )
+    
+
+},
+
+options = list(width="100%",height=1600)
+
+)
+```
+
+
+
+
+
